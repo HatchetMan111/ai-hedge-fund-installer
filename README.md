@@ -25,7 +25,7 @@ Sie können das Skript direkt von diesem Repository auf Ihrem Debian/Ubuntu-Syst
 
     **Mit `wget`:**
     ```bash
-    wget -qO - [https://raw.githubusercontent.com/HatchetMan111/ai-hedge-fund-installer/main/install_ai_hedge_fund.sh](https://raw.githubusercontent.com/HatchetMan111/ai-hedge-fund-installer/main/install_ai_hedge_fund.sh) | bash
+    wget -qO - https://raw.githubusercontent.com/HatchetMan111/ai-hedge-fund-installer/main/install_ai_hedge_fund.sh(https://raw.githubusercontent.com/HatchetMan111/ai-hedge-fund-installer/main/install_ai_hedge_fund.sh) | bash
     ```
     **Alternativ mit `curl`:**
     ```bash
