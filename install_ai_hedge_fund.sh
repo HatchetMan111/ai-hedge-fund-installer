@@ -1,130 +1,117 @@
 #!/bin/bash
-#
-# FILE: install_ai_hedge_fund.sh
-# KORRIGIERTE & VERBESSERTE VERSION
-# Behandelt PATH-Probleme, Klon-Fehler und den Layout.tsx-Fix.
-#
-set -e # Beendet das Skript sofort bei einem Fehler
+# Skript zur automatischen Bereitstellung einer Proxmox VM mit ai-hedge-fund
+# Auszuführen auf dem Proxmox Host-System.
 
-# --- KONFIGURATION ---
-PROJECT_DIR="ai-hedge-fund"
-TMUX_SESSION="ai_hedge_fund_session"
-# Wichtig: Die HTTPS-URL für das Klonen beibehalten, da sie einfacher zu verwenden ist.
-REPO_URL="https://github.com/HatchetMan111/ai-hedge-fund.git" 
-LOG_FILE="$HOME/ai_hedge_fund_setup.log"
+# --- Konfiguration ---
+VM_ID="900"                                         # Eindeutige VM-ID
+VM_NAME="ai-hedge-fund-vm"                          # Name der VM
+DISK_SIZE="32G"                                     # Größe der Root-Disk
+MEMORY="4096"                                       # RAM in MB (4 GB)
+CPU_CORES="2"                                       # Anzahl der CPU-Kerne
+STORAGE_POOL="local-lvm"                            # Speicher-Pool für die VM-Disk (Anpassen!)
+IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
+LOCAL_IMAGE_PATH="/var/lib/vz/template/qemu/debian-12-generic-amd64.qcow2"
+VM_USER="aiuser"                                    # Standard-Benutzername in der Cloud-VM
+SSH_PUBLIC_KEY_FILE="$HOME/.ssh/id_rsa.pub"         # Pfad zum öffentlichen SSH-Schlüssel
+SSH_PRIVATE_KEY_FILE="$HOME/.ssh/id_rsa"            # Pfad zum privaten SSH-Schlüssel
+INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/HatchetMan111/ai-hedge-fund-installer/main/install_ai_hedge_fund.sh" # Ihr Installer
 
-echo "========================================================"
-echo "      AI Hedge Fund - Vollständiges Setup & Start"
-echo "========================================================"
-echo "Alle Schritte werden in $LOG_FILE protokolliert."
-exec > >(tee -a "$LOG_FILE") 2>&1 # Leitet stdout und stderr an die Konsole und die Log-Datei um
+# --- Funktionen ---
 
-# --- GLOBALE PATH-Anpassung für die aktuelle Shell ---
-# Stellt sicher, dass das lokale Bin-Verzeichnis immer im Pfad ist, um Poetry sofort zu finden.
-export PATH="$HOME/.local/bin:$PATH"
+log_info() {
+    echo -e "\n\033[1;34m[INFO]\033[0m $1"
+}
 
-# --- 1. System-Vorbereitung (apt, Build-Tools, Node.js, Git) ---
-echo "--- 1/6: Installation der System-Abhängigkeiten ---"
-sudo apt update
-sudo apt install -y build-essential python3-dev curl tmux git
+log_success() {
+    echo -e "\n\033[1;32m[ERFOLG]\033[0m $1"
+}
 
-# Node.js LTS 20 installieren
-if ! command -v node &> /dev/null; then
-    echo "Installing Node.js 20 LTS..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-else
-    echo "Node.js (Version: $(node -v)) bereits installiert."
-fi
-
-# --- 2. Poetry-Installation ---
-echo "--- 2/6: Installation von Poetry (Python-Paketmanager) ---"
-if ! command -v poetry &> /dev/null; then
-    echo "Installing Poetry..."
-    curl -sSL https://install.python-poetry.org | python3 -
-    echo "Poetry erfolgreich installiert."
-else
-    echo "Poetry bereits installiert."
-fi
-
-# --- 3. Klonen des Repositories ---
-echo "--- 3/6: Klonen des Projekt-Repositories ---"
-
-# Bereinigen alter Reste, falls vorhanden
-if [ -d "$PROJECT_DIR" ]; then
-    echo "Projektverzeichnis '$PROJECT_DIR' existiert. Lösche es, um einen sauberen Klon zu gewährleisten."
-    rm -rf "$PROJECT_DIR"
-fi
-
-echo "Starte Klonen von $REPO_URL..."
-if ! git clone "$REPO_URL"; then
-    echo "--------------------------------------------------------"
-    echo "!!! KRITISCHER FEHLER BEIM KLONEN !!!"
-    echo "Der Klon-Vorgang von $REPO_URL ist fehlgeschlagen."
-    echo "Mögliche Ursache: Das Repository ist nicht öffentlich oder es liegt ein Authentifizierungsfehler vor."
-    echo "Bitte stellen Sie sicher, dass das Repository wirklich öffentlich ist und führen Sie das Skript erneut aus."
-    echo "--------------------------------------------------------"
+log_error() {
+    echo -e "\n\033[1;31m[FEHLER]\033[0m $1" >&2
     exit 1
+}
+
+# 1. Prüfe Voraussetzungen
+if [[ ! -f "$SSH_PUBLIC_KEY_FILE" ]] || [[ ! -f "$SSH_PRIVATE_KEY_FILE" ]]; then
+    log_error "SSH-Schlüsselpaar nicht gefunden! Bitte erstellen Sie es zuerst:\nssh-keygen -t rsa -b 4096\nStellen Sie sicher, dass der Pfad korrekt ist: $HOME/.ssh/id_rsa"
 fi
 
-cd "$PROJECT_DIR"
-PROJECT_ROOT=$(pwd)
-echo "Klonen erfolgreich. Aktuelles Verzeichnis: $PROJECT_ROOT"
-
-# --- 4. Projekt-Abhängigkeiten installieren ---
-echo "--- 4/6: Installation der Backend (Poetry) & Frontend (npm) Abhängigkeiten ---"
-
-echo "-> Installation Backend (Poetry)..."
-poetry install
-
-echo "-> Installation Frontend (npm)..."
-cd app/frontend
-npm install
-cd "$PROJECT_ROOT" # Zurück zum Wurzelverzeichnis
-
-# --- 5. Fix für Case-Sensitivity (Layout-Import) ---
-echo "--- 5/6: Anwenden des notwendigen Fixes für den Layout.tsx-Import (Linux) ---"
-APP_TSX="$PROJECT_ROOT/app/frontend/src/App.tsx"
-
-if grep -q "import { Layout } from './components/layout';" "$APP_TSX"; then
-    echo "Wende Fix an: './components/layout' -> './components/Layout.tsx'"
-    # sed-Befehl ersetzt die fehlerhafte Zeile
-    sed -i "s|import { Layout } from './components/layout';|import { Layout } from './components/Layout.tsx';|g" "$APP_TSX"
-else
-    echo "Fix ist bereits angewandt oder Importstruktur wurde geändert."
+# 2. Image herunterladen
+if [ ! -f "$LOCAL_IMAGE_PATH" ]; then
+    log_info "Lade Debian Cloud Image herunter..."
+    mkdir -p $(dirname "$LOCAL_IMAGE_PATH")
+    wget -qO "$LOCAL_IMAGE_PATH" "$IMAGE_URL" || log_error "Download des Cloud Images fehlgeschlagen."
 fi
 
-# --- 6. Start der Dienste in TMUX ---
-echo "--- 6/6: Starten der Dienste in der Tmux-Sitzung '$TMUX_SESSION' ---"
+# 3. VM erstellen und konfigurieren
+log_info "Erstelle VM $VM_ID ($VM_NAME) auf Proxmox..."
 
-# Prüfen, ob die Sitzung bereits existiert
-tmux has-session -t "$TMUX_SESSION" 2>/dev/null
+# VM erstellen
+qm create $VM_ID --name $VM_NAME --memory $MEMORY --cores $CPU_CORES --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --vga qxl --agent 1
+if [ $? -ne 0 ]; then log_error "Fehler beim Erstellen der VM (qm create)."; fi
 
-if [ $? != 0 ]; then
-    echo "Starte neue Tmux-Sitzung: $TMUX_SESSION"
-    tmux new-session -d -s "$TMUX_SESSION"
-    
-    # Fenster 0: Backend starten (API - Port 8000)
-    tmux send-keys -t "$TMUX_SESSION:0" "cd $PROJECT_ROOT" C-m
-    # Start mit Poetry (PATH ist hier kritisch, wird aber von der Bash-Session am Anfang geerbt)
-    tmux send-keys -t "$TMUX_SESSION:0" "poetry run uvicorn app.backend.main:app --host 0.0.0.0 --reload" C-m
-    tmux rename-window -t "$TMUX_SESSION:0" "Backend-API (8000)"
+# Festplatte importieren und vergrößern
+qm importdisk $VM_ID "$LOCAL_IMAGE_PATH" "$STORAGE_POOL"
+qm set $VM_ID --scsi0 "$STORAGE_POOL":vm-$VM_ID-disk-0
+qm set $VM_ID --boot c --bootdisk scsi0
+qm set $VM_ID --scsihw virtio-scsi-pci
+qm resize $VM_ID scsi0 $DISK_SIZE
+qm set $VM_ID --serial0 socket
 
-    # Neues Fenster 1: Frontend starten (UI - Port 5173)
-    tmux new-window -t "$TMUX_SESSION:1" -n "Frontend-UI (5173)"
-    tmux send-keys -t "$TMUX_SESSION:1" "cd $PROJECT_ROOT/app/frontend" C-m
-    tmux send-keys -t "$TMUX_SESSION:1" "npm run dev -- --host 0.0.0.0" C-m
-    
-    echo "========================================================"
-    echo "✅ INSTALLATION UND START ERFOLGREICH!"
-    echo "Frontend-UI ist verfügbar unter: http://[Ihre VM-IP-Adresse]:5173"
-    echo "Backend-API (Docs) ist verfügbar unter: http://[Ihre VM-IP-Adresse]:8000/docs"
-    echo "--------------------------------------------------------"
-    echo "Drücken Sie Strg+B und dann [N] oder [P], um zwischen Frontend und Backend zu wechseln."
-    
-else
-    echo "Tmux-Sitzung '$TMUX_SESSION' existiert bereits. Verbinde neu."
+# Cloud-Init Konfiguration
+log_info "Konfiguriere Cloud-Init für SSH und Benutzer $VM_USER..."
+qm set $VM_ID --ciuser $VM_USER
+qm set $VM_ID --cipassword 'ProxmoxStandardPasswort' # Kann später entfernt oder geändert werden
+qm set $VM_ID --ipconfig0 ip=dhcp
+qm set $VM_ID --sshkeys $(cat "$SSH_PUBLIC_KEY_FILE")
+qm set $VM_ID --ci-ide2 cdrom=none # CD-ROM als Cloud-Init-Device entfernen, da es Probleme machen kann
+qm set $VM_ID --ide2 "$STORAGE_POOL":cloudinit
+
+log_success "VM-Konfiguration abgeschlossen."
+
+# 4. VM starten und auf Verfügbarkeit warten
+log_info "Starte VM und warte auf die IP-Adresse..."
+qm start $VM_ID
+
+# Warte maximal 120 Sekunden auf die IP-Adresse über den QEMU-Agenten
+VM_IP=""
+ATTEMPTS=0
+MAX_ATTEMPTS=24
+while [ -z "$VM_IP" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+    sleep 5
+    VM_IP=$(qm agent $VM_ID network-get-interfaces 2>/dev/null | grep -A 1 'ip-address' | tail -1 | awk -F '"' '{print $4}' | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+    ATTEMPTS=$((ATTEMPTS + 1))
+    echo "Versuch $ATTEMPTS/$MAX_ATTEMPTS: Warte auf IP-Adresse..."
+done
+
+if [ -z "$VM_IP" ]; then
+    log_error "Konnte die IP-Adresse der VM $VM_ID nicht ermitteln. Breche ab."
 fi
 
-# Sitzung wieder aufnehmen, damit der Benutzer die Logs sieht
-tmux attach -t "$TMUX_SESSION"
+log_success "VM läuft. IP-Adresse: $VM_IP"
+
+# 5. ai-hedge-fund Installation in der VM
+log_info "Installiere ai-hedge-fund in der VM über SSH ($VM_USER@$VM_IP)..."
+
+# SSH-Verbindung aufbauen und Installationsskript ausführen
+# Wir müssen den SSH-Key direkt angeben, da wir als root auf dem Host laufen, aber als $VM_USER in der VM
+INSTALL_COMMAND="wget -qO - $INSTALL_SCRIPT_URL | bash"
+SSH_OPTS="-i $SSH_PRIVATE_KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+SSH_TARGET="$VM_USER@$VM_IP"
+
+# Warte kurz, um sicherzustellen, dass SSH bereit ist
+sleep 10
+
+ssh $SSH_OPTS "$SSH_TARGET" "$INSTALL_COMMAND"
+if [ $? -ne 0 ]; then log_error "Installation des ai-hedge-fund in der VM fehlgeschlagen."; fi
+
+# 6. Abschluss
+log_success "Die VM $VM_NAME ($VM_ID) mit ai-hedge-fund ist bereit!"
+echo "--------------------------------------------------------"
+echo "Zugangsdaten:"
+echo "Benutzer: $VM_USER"
+echo "IP-Adresse: $VM_IP"
+echo "SSH-Befehl: ssh -i $SSH_PRIVATE_KEY_FILE $VM_USER@$VM_IP"
+echo ""
+echo "Nächster Schritt: Verbinden Sie sich und bearbeiten Sie die API-Schlüssel in ~/ai-hedge-fund/.env"
+echo "--------------------------------------------------------"
