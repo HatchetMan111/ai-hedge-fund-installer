@@ -1,20 +1,13 @@
 #!/bin/bash
-# Skript zur automatischen Bereitstellung einer Proxmox VM mit ai-hedge-fund
-# Auszuführen auf dem Proxmox Host-System.
+# Installskript für ai-hedge-fund (https://github.com/virattt/ai-hedge-fund)
+# Entwickelt für Debian/Ubuntu (Proxmox LXC/VM)
+# Kann direkt von GitHub ausgeführt werden:
+# wget -qO - https://raw.githubusercontent.com/<YOUR_GITHUB_USER>/<YOUR_REPO_NAME>/main/install_ai_hedge_fund.sh | bash
 
 # --- Konfiguration ---
-VM_ID="900"                                         # Eindeutige VM-ID
-VM_NAME="ai-hedge-fund-vm"                          # Name der VM
-DISK_SIZE="32G"                                     # Größe der Root-Disk
-MEMORY="4096"                                       # RAM in MB (4 GB)
-CPU_CORES="2"                                       # Anzahl der CPU-Kerne
-STORAGE_POOL="local-lvm"                            # Speicher-Pool für die VM-Disk (Anpassen!)
-IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
-LOCAL_IMAGE_PATH="/var/lib/vz/template/qemu/debian-12-generic-amd64.qcow2"
-VM_USER="aiuser"                                    # Standard-Benutzername in der Cloud-VM
-SSH_PUBLIC_KEY_FILE="$HOME/.ssh/id_rsa.pub"         # Pfad zum öffentlichen SSH-Schlüssel
-SSH_PRIVATE_KEY_FILE="$HOME/.ssh/id_rsa"            # Pfad zum privaten SSH-Schlüssel
-INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/HatchetMan111/ai-hedge-fund-installer/main/install_ai_hedge_fund.sh" # Ihr Installer
+INSTALL_DIR="$HOME/ai-hedge-fund"
+REPO_URL="https://github.com/virattt/ai-hedge-fund.git"
+USER_NAME=$(whoami)
 
 # --- Funktionen ---
 
@@ -31,87 +24,81 @@ log_error() {
     exit 1
 }
 
-# 1. Prüfe Voraussetzungen
-if [[ ! -f "$SSH_PUBLIC_KEY_FILE" ]] || [[ ! -f "$SSH_PRIVATE_KEY_FILE" ]]; then
-    log_error "SSH-Schlüsselpaar nicht gefunden! Bitte erstellen Sie es zuerst:\nssh-keygen -t rsa -b 4096\nStellen Sie sicher, dass der Pfad korrekt ist: $HOME/.ssh/id_rsa"
+# --- Hauptinstallation ---
+
+log_info "Starte die Installation des ai-hedge-fund..."
+log_info "Aktualisiere System und installiere grundlegende Pakete..."
+
+# 1. Systemaktualisierung und Abhängigkeiten
+# Installiere `wget` falls noch nicht vorhanden, da es für curl install benötigt wird
+if ! command -v wget &> /dev/null; then
+    sudo apt update && sudo apt install -y wget
+fi
+if ! command -v curl &> /dev/null; then
+    sudo apt update && sudo apt install -y curl
 fi
 
-# 2. Image herunterladen
-if [ ! -f "$LOCAL_IMAGE_PATH" ]; then
-    log_info "Lade Debian Cloud Image herunter..."
-    mkdir -p $(dirname "$LOCAL_IMAGE_PATH")
-    wget -qO "$LOCAL_IMAGE_PATH" "$IMAGE_URL" || log_error "Download des Cloud Images fehlgeschlagen."
+sudo apt update || log_error "Aktualisierung der Paketlisten fehlgeschlagen."
+sudo apt install -y git python3 python3-pip || log_error "Installation der System-Abhängigkeiten fehlgeschlagen."
+
+# 2. Poetry Installation
+log_info "Installiere Python-Abhängigkeitsmanager Poetry..."
+if ! command -v poetry &> /dev/null; then
+    curl -sSL https://install.python-poetry.org | python3 - || log_error "Installation von Poetry fehlgeschlagen."
+    
+    # Fügen Sie Poetry zum PATH der aktuellen Shell und zur .bashrc/oder .zshrc hinzu
+    export PATH="$HOME/.local/bin:$PATH"
+    
+    # Permanentes Hinzufügen des PATH für den aktuellen Benutzer
+    # Überprüfen, ob es bereits in der .bashrc enthalten ist, um Duplikate zu vermeiden
+    if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc"; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+    fi
+    log_success "Poetry wurde erfolgreich installiert und zum PATH hinzugefügt."
+else
+    log_info "Poetry ist bereits installiert."
 fi
 
-# 3. VM erstellen und konfigurieren
-log_info "Erstelle VM $VM_ID ($VM_NAME) auf Proxmox..."
-
-# VM erstellen
-qm create $VM_ID --name $VM_NAME --memory $MEMORY --cores $CPU_CORES --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --vga qxl --agent 1
-if [ $? -ne 0 ]; then log_error "Fehler beim Erstellen der VM (qm create)."; fi
-
-# Festplatte importieren und vergrößern
-qm importdisk $VM_ID "$LOCAL_IMAGE_PATH" "$STORAGE_POOL"
-qm set $VM_ID --scsi0 "$STORAGE_POOL":vm-$VM_ID-disk-0
-qm set $VM_ID --boot c --bootdisk scsi0
-qm set $VM_ID --scsihw virtio-scsi-pci
-qm resize $VM_ID scsi0 $DISK_SIZE
-qm set $VM_ID --serial0 socket
-
-# Cloud-Init Konfiguration
-log_info "Konfiguriere Cloud-Init für SSH und Benutzer $VM_USER..."
-qm set $VM_ID --ciuser $VM_USER
-qm set $VM_ID --cipassword 'ProxmoxStandardPasswort' # Kann später entfernt oder geändert werden
-qm set $VM_ID --ipconfig0 ip=dhcp
-qm set $VM_ID --sshkeys $(cat "$SSH_PUBLIC_KEY_FILE")
-qm set $VM_ID --ci-ide2 cdrom=none # CD-ROM als Cloud-Init-Device entfernen, da es Probleme machen kann
-qm set $VM_ID --ide2 "$STORAGE_POOL":cloudinit
-
-log_success "VM-Konfiguration abgeschlossen."
-
-# 4. VM starten und auf Verfügbarkeit warten
-log_info "Starte VM und warte auf die IP-Adresse..."
-qm start $VM_ID
-
-# Warte maximal 120 Sekunden auf die IP-Adresse über den QEMU-Agenten
-VM_IP=""
-ATTEMPTS=0
-MAX_ATTEMPTS=24
-while [ -z "$VM_IP" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-    sleep 5
-    VM_IP=$(qm agent $VM_ID network-get-interfaces 2>/dev/null | grep -A 1 'ip-address' | tail -1 | awk -F '"' '{print $4}' | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-    ATTEMPTS=$((ATTEMPTS + 1))
-    echo "Versuch $ATTEMPTS/$MAX_ATTEMPTS: Warte auf IP-Adresse..."
-done
-
-if [ -z "$VM_IP" ]; then
-    log_error "Konnte die IP-Adresse der VM $VM_ID nicht ermitteln. Breche ab."
+# 3. Repository klonen
+log_info "Klone das ai-hedge-fund Repository nach $INSTALL_DIR..."
+if [ -d "$INSTALL_DIR" ]; then
+    log_info "Verzeichnis existiert bereits. Lösche das alte Verzeichnis..."
+    rm -rf "$INSTALL_DIR" || log_error "Löschen des alten Verzeichnisses fehlgeschlagen."
 fi
 
-log_success "VM läuft. IP-Adresse: $VM_IP"
+git clone "$REPO_URL" "$INSTALL_DIR" || log_error "Klonen des Repositorys fehlgeschlagen."
+cd "$INSTALL_DIR" || log_error "Wechseln in das Installationsverzeichnis fehlgeschlagen."
 
-# 5. ai-hedge-fund Installation in der VM
-log_info "Installiere ai-hedge-fund in der VM über SSH ($VM_USER@$VM_IP)..."
+# 4. Python-Abhängigkeiten installieren
+log_info "Installiere Python-Abhängigkeiten mit Poetry. Das kann einige Minuten dauern..."
+# Stellen Sie sicher, dass Poetry im aktuellen Shell-Kontext verfügbar ist, falls es gerade erst installiert wurde
+export PATH="$HOME/.local/bin:$PATH"
 
-# SSH-Verbindung aufbauen und Installationsskript ausführen
-# Wir müssen den SSH-Key direkt angeben, da wir als root auf dem Host laufen, aber als $VM_USER in der VM
-INSTALL_COMMAND="wget -qO - $INSTALL_SCRIPT_URL | bash"
-SSH_OPTS="-i $SSH_PRIVATE_KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-SSH_TARGET="$VM_USER@$VM_IP"
+poetry install || log_error "Installation der Python-Abhängigkeiten mit Poetry fehlgeschlagen."
 
-# Warte kurz, um sicherzustellen, dass SSH bereit ist
-sleep 10
+# 5. Konfiguration (API-Schlüssel) vorbereiten
+log_info "Bereite die .env Konfigurationsdatei vor..."
+if [ ! -f .env ]; then
+    cp .env.example .env
+    log_info "Eine .env-Datei wurde basierend auf .env.example erstellt."
+    log_info "BITTE BEACHTEN SIE: Sie müssen nun die Datei $INSTALL_DIR/.env bearbeiten und Ihre OPENAI_API_KEY (und ggf. weitere Schlüssel) eintragen."
+else
+    log_info "Die .env-Datei existiert bereits."
+fi
 
-ssh $SSH_OPTS "$SSH_TARGET" "$INSTALL_COMMAND"
-if [ $? -ne 0 ]; then log_error "Installation des ai-hedge-fund in der VM fehlgeschlagen."; fi
+# 6. Abschluss und Anweisungen
+log_success "Die Installation des ai-hedge-fund ist abgeschlossen!"
 
-# 6. Abschluss
-log_success "Die VM $VM_NAME ($VM_ID) mit ai-hedge-fund ist bereit!"
-echo "--------------------------------------------------------"
-echo "Zugangsdaten:"
-echo "Benutzer: $VM_USER"
-echo "IP-Adresse: $VM_IP"
-echo "SSH-Befehl: ssh -i $SSH_PRIVATE_KEY_FILE $VM_USER@$VM_IP"
-echo ""
-echo "Nächster Schritt: Verbinden Sie sich und bearbeiten Sie die API-Schlüssel in ~/ai-hedge-fund/.env"
-echo "--------------------------------------------------------"
+echo "--- Nächste Schritte ---"
+echo "1. Wechseln Sie in das Installationsverzeichnis:"
+echo "   cd $INSTALL_DIR"
+echo "2. Bearbeiten Sie die Konfigurationsdatei und fügen Sie Ihre API-Schlüssel hinzu:"
+echo "   nano .env"
+echo "3. Führen Sie die Anwendung aus. Beispiele:"
+echo "   # Führen Sie die CLI aus:"
+echo "   poetry run python src/main.py --ticker AAPL,MSFT,NVDA"
+echo "   # Starten Sie die Webanwendung (falls gewünscht, siehe GitHub für Details):"
+echo "   poetry run streamlit run src/web_app.py"
+
+echo "------------------------"
+log_info "Um Poetry nach dem nächsten Login zu nutzen, starten Sie die Shell neu oder führen Sie 'source ~/.bashrc' aus."
