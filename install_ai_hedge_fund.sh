@@ -1,20 +1,21 @@
 #!/bin/bash
 #
-# FILE: install_ai_hedge_fund_FINAL_V3.sh
+# FILE: install_ai_hedge_fund_FINAL_V4_ZIP.sh
 # KRITISCH VERBESSERTE VERSION
-# Behebt den Anmeldefehler durch Umstellung auf Git Fetch und Checkout statt Clone.
+# Umgeht den Authentifizierungsfehler durch Download des ZIP-Archivs statt Git Clone.
 #
 set -e
 
 # --- KONFIGURATION ---
 PROJECT_DIR="ai-hedge-fund"
+# Name des Verzeichnisses, das nach dem Entpacken entsteht (oft 'RepoName-main' oder 'RepoName-master')
+TEMP_DIR_NAME="ai-hedge-fund-master"
 TMUX_SESSION="ai_hedge_fund_session"
-# Wir verwenden die HTTP-URL, aber holen die Daten manuell.
-REPO_URL="https://github.com/HatchetMan111/ai-hedge-fund.git"
+REPO_ZIP_URL="https://github.com/HatchetMan111/ai-hedge-fund/archive/refs/heads/master.zip"
 LOG_FILE="$HOME/ai_hedge_fund_setup.log"
 
 echo "========================================================"
-echo "      🚀 AI Hedge Fund - FINALER Versuch: Git-Fix angewandt"
+echo "      🚀 AI Hedge Fund - FINALER Versuch: ZIP-Download Fix"
 echo "========================================================"
 echo "Alle Schritte werden in $LOG_FILE protokolliert."
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -22,11 +23,13 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # --- GLOBALE PATH-Anpassung ---
 export PATH="$HOME/.local/bin:$PATH"
 
-# --- 1. System-Vorbereitung (Unverändert) ---
+# --- 1. System-Vorbereitung ---
 echo "--- 1/8: Installation der System-Abhängigkeiten ---"
+# Wir stellen sicher, dass 'unzip' installiert ist
 sudo apt update
-sudo apt install -y build-essential python3-dev curl tmux git -y
+sudo apt install -y build-essential python3-dev curl tmux git unzip openssl
 
+# Node.js LTS 20 installieren
 if ! command -v node &> /dev/null; then
     echo "Installing Node.js 20 LTS..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
@@ -35,53 +38,55 @@ else
     echo "Node.js (Version: $(node -v)) bereits installiert."
 fi
 
-# --- 2. Poetry-Installation (Unverändert) ---
+# --- 2. Poetry-Installation ---
 echo "--- 2/8: Installation von Poetry ---"
 if ! command -v poetry &> /dev/null; then
     curl -sSL https://install.python-poetry.org | python3 -
 fi
 echo "Poetry bereit."
 
-# --- 3. Klonen des Repositories (KRITISCHER FIX) ---
-echo "--- 3/8: Klonen des Projekt-Repositories (Umgehung des Anmeldefehlers) ---"
+# --- 3. Klonen des Repositories (KRITISCHER FIX: ZIP-DOWNLOAD) ---
+echo "--- 3/8: Download des Projekt-Repositories per ZIP-Archiv ---"
 
+# Bereinigen alter Reste
 if [ -d "$PROJECT_DIR" ]; then
     echo "Projektverzeichnis '$PROJECT_DIR' existiert. Lösche es für einen sauberen Start."
     rm -rf "$PROJECT_DIR"
 fi
+if [ -d "$TEMP_DIR_NAME" ]; then
+    rm -rf "$TEMP_DIR_NAME"
+fi
 
-mkdir "$PROJECT_DIR"
-cd "$PROJECT_DIR"
-PROJECT_ROOT=$(pwd)
-
-echo "Manuelles Initialisieren und Abrufen des Repository-Inhalts..."
-
-# **KRITISCHE NEUE SCHRITTE:**
-# 1. Initiiere ein leeres Git-Repo
-git init
-
-# 2. Füge die Remote-URL hinzu
-git remote add origin "$REPO_URL"
-
-# 3. Hole die Dateien explizit ab (tiefenreduziert, um es schneller zu machen)
-# Hier KANN es theoretisch wieder fragen, aber es ist die sauberste Art, den Inhalt zu holen.
-# Wenn es hier fehlschlägt, ist das Repository definitiv NICHT öffentlich oder nicht zugänglich.
-if ! git fetch --depth 1 origin master; then
+# 1. Download der ZIP-Datei
+echo "Downloade ZIP von $REPO_ZIP_URL..."
+if ! curl -L "$REPO_ZIP_URL" -o "$TEMP_DIR_NAME.zip"; then
     echo "--------------------------------------------------------"
-    echo "!!! KRITISCHER FEHLER BEIM ABRUFEN DER DATEN !!!"
-    echo "Wenn Sie diesen Fehler sehen, ist das Repository entweder nicht öffentlich oder Ihre Netzwerk-/Firewall-Konfiguration blockiert Git."
+    echo "!!! KRITISCHER FEHLER BEIM ZIP-DOWNLOAD !!!"
+    echo "Der Download ist fehlgeschlagen. Bitte überprüfen Sie die Internetverbindung."
     echo "--------------------------------------------------------"
     exit 1
 fi
 
-# 4. Checke den Master-Branch aus
-git checkout master
-echo "Klonen/Abrufen erfolgreich. Aktuelles Verzeichnis: $PROJECT_ROOT"
+# 2. Entpacken des Archivs
+echo "Entpacke Archiv..."
+unzip "$TEMP_DIR_NAME.zip"
 
-# --- 4. Projekt-Abhängigkeiten installieren (Unverändert) ---
+# 3. Umbenennen des entpackten Ordners in den Zielnamen
+mv "$TEMP_DIR_NAME" "$PROJECT_DIR"
+
+# 4. Bereinigung der ZIP-Datei
+rm "$TEMP_DIR_NAME.zip"
+
+cd "$PROJECT_DIR"
+PROJECT_ROOT=$(pwd)
+echo "Download und Entpacken erfolgreich. Aktuelles Verzeichnis: $PROJECT_ROOT"
+
+# --- 4. Projekt-Abhängigkeiten installieren ---
 echo "--- 4/8: Installation der Backend & Frontend Abhängigkeiten ---"
 
 echo "-> Installation Backend (Poetry)..."
+# Stelle sicher, dass das poetry.lock File aktuell ist, bevor dependencies installiert werden
+poetry lock --no-update
 poetry install
 
 echo "-> Installation Frontend (npm)..."
@@ -89,7 +94,7 @@ cd app/frontend
 npm install
 cd "$PROJECT_ROOT"
 
-# --- 5. Fix für Case-Sensitivity (Unverändert) ---
+# --- 5. Fix für Case-Sensitivity ---
 echo "--- 5/8: Anwenden des notwendigen Fixes für den Layout.tsx-Import ---"
 APP_TSX="$PROJECT_ROOT/app/frontend/src/App.tsx"
 if grep -q "import { Layout } from './components/layout';" "$APP_TSX"; then
@@ -97,7 +102,7 @@ if grep -q "import { Layout } from './components/layout';" "$APP_TSX"; then
     sed -i "s|import { Layout } from './components/layout';|import { Layout } from './components/Layout.tsx';|g" "$APP_TSX"
 fi
 
-# --- 6. KRITISCHER FIX: .env-Datei und DB-Setup (Unverändert) ---
+# --- 6. KRITISCHER FIX: .env-Datei und DB-Setup ---
 echo "--- 6/8: Erstellung der kritischen Backend-Konfiguration (.env) und DB-Migration ---"
 ENV_FILE="$PROJECT_ROOT/.env"
 JWT_SECRET=$(openssl rand -base64 32)
@@ -108,16 +113,14 @@ EOF
 echo ".env-Datei mit zufälligem SECRET_KEY erstellt."
 
 echo "-> Führe Alembic-Datenbankmigrationen aus..."
-# Stelle sicher, dass openssl installiert ist, falls es für den JWT_SECRET fehlt
-sudo apt install -y openssl
 poetry run alembic upgrade head
 echo "Datenbankmigrationen erfolgreich abgeschlossen."
 
-# --- 7. Bereinigung (Unverändert) ---
+# --- 7. Bereinigung ---
 echo "--- 7/8: Bereinigung (Löschen von SQLite-Datei, falls schon vorhanden) ---"
 rm -f "$PROJECT_ROOT/sql_app.db"
 
-# --- 8. Start der Dienste in TMUX (Unverändert) ---
+# --- 8. Start der Dienste in TMUX ---
 echo "--- 8/8: Starten der Dienste in der Tmux-Sitzung '$TMUX_SESSION' ---"
 tmux has-session -t "$TMUX_SESSION" 2>/dev/null
 
