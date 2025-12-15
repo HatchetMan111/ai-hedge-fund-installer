@@ -1,130 +1,148 @@
 #!/bin/bash
 #
-# FILE: install_ai_hedge_fund_FINAL_STREAMLIT.sh
-# Installation und Start des virattt/ai-hedge-fund Projekts (Streamlit-Version).
-# Behebt fehlende Poetry-Abhängigkeiten und korrigiert Tmux-Startbefehle.
+# DATEI: install_ai_hedge_fund.sh
+# ZWECK: Vollständige Installation, Konfiguration und Start der AI-Hedge-Fund-Anwendung.
 #
-set -e
+set -e # Beendet das Skript sofort bei einem Fehler
 
 # --- KONFIGURATION ---
-INSTALL_DIR="$HOME/ai-hedge-fund"
-REPO_URL="https://github.com/virattt/ai-hedge-fund.git"
-TMUX_SESSION="ai_hedge_fund_ui"
-STREAMLIT_PORT="8501"
+PROJECT_DIR="ai-hedge-fund"
+TMUX_SESSION="ai_hedge_fund_session"
+# KRITISCH: NUTZT SSH-KLONEN. SSH-SCHLÜSSEL MUSS ZU GITHUB HINZUGEFÜGT WERDEN!
+REPO_URL="git@github.com:HatchetMan111/ai-hedge-fund.git" 
+LOG_FILE="$HOME/ai_hedge_fund_setup.log"
 
-# --- FUNKTIONEN ---
+echo "========================================================"
+echo "      AI Hedge Fund - Vollständiges Setup & Start"
+echo "========================================================"
+echo "Alle Schritte werden in $LOG_FILE protokolliert."
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-log_info() {
-    echo -e "\n\033[1;34m[INFO]\033[0m $1"
-}
+# --- GLOBALE PATH-Anpassung (für Poetry) ---
+# Stellt sicher, dass das Poetry-Binärverzeichnis immer im PATH ist.
+export PATH="$HOME/.local/bin:$PATH"
 
-log_success() {
-    echo -e "\n\033[1;32m[ERFOLG]\033[0m $1"
-}
+# --- 1/6: System-Vorbereitung (apt, Build-Tools, Node.js) ---
+echo "--- 1/6: Installation der System-Abhängigkeiten ---"
+sudo apt update
+sudo apt install -y build-essential python3-dev curl tmux git nano
 
-log_error() {
-    echo -e "\n\033[1;31m[FEHLER]\033[0m $1" >&2
-    exit 1
-}
-
-# Funktion zur Ermittlung der IP-Adresse
-get_ip_address() {
-    # Versucht, die primäre IP-Adresse der Standard-Route zu ermitteln
-    IP=$(ip route get 1 | awk '{print $NF; exit}')
-    if [[ -z "$IP" ]]; then
-        # Fallback für andere Systeme
-        IP=$(hostname -I | awk '{print $1}')
-    fi
-    echo "$IP"
-}
-
-# --- HAUPTINSTALLATION ---
-
-log_info "Starte die Installation des ai-hedge-fund (Streamlit-Version)..."
-
-# 1. Systemaktualisierung und Abhängigkeiten
-log_info "1/7: Installation der System-Abhängigkeiten (git, python, tmux)..."
-sudo apt update || log_error "Aktualisierung der Paketlisten fehlgeschlagen."
-sudo apt install -y git python3 python3-pip curl tmux || log_error "Installation der System-Abhängigkeiten fehlgeschlagen."
-
-# 2. Poetry Installation
-log_info "2/7: Installation von Poetry..."
-if ! command -v poetry &> /dev/null; then
-    curl -sSL https://install.python-poetry.org | python3 - || log_error "Installation von Poetry fehlgeschlagen."
-    export PATH="$HOME/.local/bin:$PATH"
-    if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc"; then
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-    fi
-    log_success "Poetry wurde erfolgreich installiert."
+# Node.js LTS 20 installieren (für das Frontend)
+if ! command -v node &> /dev/null; then
+    echo "Installing Node.js 20 LTS..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
 else
-    log_info "Poetry ist bereits installiert."
+    echo "Node.js (Version: $(node -v)) bereits installiert."
 fi
-export PATH="$HOME/.local/bin:$PATH" # PATH im aktuellen Kontext sicherstellen
 
-# 3. Repository klonen
-log_info "3/7: Klone das ai-hedge-fund Repository..."
-if [ -d "$INSTALL_DIR" ]; then
-    log_info "Lösche altes Verzeichnis..."
-    rm -rf "$INSTALL_DIR" || log_error "Löschen des alten Verzeichnisses fehlgeschlagen."
+# --- 2/6: Poetry-Installation ---
+echo "--- 2/6: Installation von Poetry (Python-Paketmanager) ---"
+if ! command -v poetry &> /dev/null; then
+    echo "Installing Poetry..."
+    curl -sSL https://install.python-poetry.org | python3 -
+    echo "Poetry erfolgreich installiert."
+else
+    echo "Poetry bereits installiert."
 fi
-git clone "$REPO_URL" "$INSTALL_DIR" || log_error "Klonen des Repositorys fehlgeschlagen."
-cd "$INSTALL_DIR" || log_error "Wechseln in das Installationsverzeichnis fehlgeschlagen."
+
+# --- 3/6: Klonen des Repositories via SSH ---
+echo "--- 3/6: Klonen des Projekt-Repositories via SSH ---"
+
+# Bereinigen alter Reste
+if [ -d "$PROJECT_DIR" ]; then
+    echo "Projektverzeichnis '$PROJECT_DIR' existiert. Lösche es, um einen sauberen Klon zu gewährleisten."
+    rm -rf "$PROJECT_DIR"
+fi
+
+# Prüfung, ob SSH-Schlüssel existiert (kritisch für SSH-Klonen)
+if [ ! -f "$HOME/.ssh/id_rsa" ]; then
+    echo "--------------------------------------------------------"
+    echo "!!! KRITISCHER FEHLER: SSH-Schlüssel nicht gefunden !!!"
+    echo "Bitte generieren Sie den Schlüssel und fügen Sie ihn zu GitHub hinzu."
+    echo "Generieren: ssh-keygen -t rsa -b 4096 -C 'vm-key'"
+    echo "--------------------------------------------------------"
+    exit 1
+fi
+
+echo "Starte Klonen von $REPO_URL..."
+if ! git clone "$REPO_URL"; then
+    echo "--------------------------------------------------------"
+    echo "!!! KRITISCHER FEHLER BEIM KLONEN !!!"
+    echo "Mögliche Ursache: SSH-Schlüssel fehlt oder ist GitHub unbekannt."
+    echo "--------------------------------------------------------"
+    exit 1
+fi
+
+cd "$PROJECT_DIR"
 PROJECT_ROOT=$(pwd)
+echo "Klonen erfolgreich. Aktuelles Verzeichnis: $PROJECT_ROOT"
 
-# 4. KRITISCHER FIX: Fehlende Abhängigkeiten hinzufügen
-log_info "4/7: Behebe fehlende Streamlit-Abhängigkeiten in pyproject.toml..."
-# Diese Pakete fehlen laut Ihren Fehlerprotokollen
-poetry add streamlit || log_error "Hinzufügen von streamlit fehlgeschlagen."
-poetry add pandas numpy plotly || log_error "Hinzufügen von Datenanalyse-Paketen fehlgeschlagen."
-poetry add yfinance || log_error "Hinzufügen von yfinance fehlgeschlagen."
-log_success "Streamlit und notwendige Pakete wurden zur Konfiguration hinzugefügt."
+# --- 4/6: Projekt-Abhängigkeiten installieren ---
+echo "--- 4/6: Installation der Backend (Poetry) & Frontend (npm) Abhängigkeiten ---"
 
-# 5. Python-Abhängigkeiten installieren
-log_info "5/7: Installiere alle Python-Abhängigkeiten mit Poetry..."
-poetry install || log_error "Installation der Python-Abhängigkeiten mit Poetry fehlgeschlagen."
+echo "-> Installation Backend (Poetry)..."
+poetry install
 
-# 6. Konfiguration vorbereiten
-log_info "6/7: Bereite die .env Konfigurationsdatei vor..."
-if [ ! -f .env ]; then
-    cp .env.example .env
-    log_info "Eine .env-Datei wurde erstellt. BITTE DEN OPENAI_API_KEY EINFÜGEN."
+echo "-> Installation Frontend (npm)..."
+cd app/frontend
+npm install
+cd "$PROJECT_ROOT" # Zurück zum Wurzelverzeichnis
+
+# --- 5/6: Fix für Case-Sensitivity (Layout-Import) ---
+echo "--- 5/6: Anwenden des notwendigen Fixes für den Layout.tsx-Import (Linux) ---"
+APP_TSX="$PROJECT_ROOT/app/frontend/src/App.tsx"
+
+if grep -q "import { Layout } from './components/layout';" "$APP_TSX"; then
+    echo "Wende Fix an: './components/layout' -> './components/Layout.tsx'"
+    sed -i "s|import { Layout } from './components/layout';|import { Layout } from './components/Layout.tsx';|g" "$APP_TSX"
+else
+    echo "Fix ist bereits angewandt oder Importstruktur wurde geändert."
 fi
 
-# 7. Starten der Dienste in TMUX
-log_info "7/7: Starte die Streamlit Web-UI in der Tmux-Sitzung '$TMUX_SESSION'..."
+# --- 6/6: Start der Dienste in TMUX ---
+echo "--- 6/6: Starten der Dienste in der Tmux-Sitzung '$TMUX_SESSION' ---"
 
-# Tmux-Sitzung beenden, falls sie noch von einem vorherigen (fehlerhaften) Lauf existiert
+# Tmux-Sitzung stoppen, falls sie von einem vorherigen Lauf existiert
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
-# Starte neue Tmux-Sitzung
+echo "Starte neue Tmux-Sitzung: $TMUX_SESSION"
 tmux new-session -d -s "$TMUX_SESSION"
 
-# Fenster 0: Streamlit Web-App (UI - Port 8501) - KORRIGIERTER BEFEHL
+# Fenster 0: Backend starten (API - Port 8000)
 tmux send-keys -t "$TMUX_SESSION:0" "cd $PROJECT_ROOT" C-m
-tmux send-keys -t "$TMUX_SESSION:0" "poetry run python -m streamlit run src/web_app.py --server.port $STREAMLIT_PORT" C-m
-tmux rename-window -t "$TMUX_SESSION:0" "Streamlit-UI ($STREAMLIT_PORT)"
+tmux send-keys -t "$TMUX_SESSION:0" "poetry run uvicorn app.backend.main:app --host 0.0.0.0 --reload" C-m
+tmux rename-window -t "$TMUX_SESSION:0" "Backend-API (8000)"
 
-# Fenster 1: CLI (Poetry Shell - KORRIGIERTER BEFEHL)
-tmux new-window -t "$TMUX_SESSION:1" -n "CLI-Shell"
-tmux send-keys -t "$TMUX_SESSION:1" "cd $PROJECT_ROOT" C-m
-tmux send-keys -t "$TMUX_SESSION:1" "poetry run bash" C-m # Korrigiert für neuere Poetry-Versionen
-
-log_success "Installation und Start in Tmux abgeschlossen!"
-
-# --- ABSCHLUSSAUSGABE ---
-VM_IP=$(get_ip_address)
-log_success "Die AI Hedge Fund UI wurde erfolgreich gestartet!"
+# Neues Fenster 1: Frontend starten (UI - Port 5173)
+tmux new-window -t "$TMUX_SESSION:1" -n "Frontend-UI (5173)"
+tmux send-keys -t "$TMUX_SESSION:1" "cd $PROJECT_ROOT/app/frontend" C-m
+tmux send-keys -t "$TMUX_SESSION:1" "npm run dev -- --host 0.0.0.0" C-m
 
 echo "========================================================"
-echo "      🚀 BEREIT ZUM START 🚀"
-echo "--------------------------------------------------------"
-echo "🌐 Frontend-UI (Streamlit) ist verfügbar unter:"
-echo "   http://$VM_IP:$STREAMLIT_PORT"
-echo "--------------------------------------------------------"
-echo "1. API-Key eintragen: Bearbeiten Sie die Datei $PROJECT_ROOT/.env"
-echo "2. Tmux verbinden: tmux attach -t $TMUX_SESSION"
-echo "3. Im Tmux-Fenster 0 (Streamlit) neu starten (Strg+C, dann Enter)."
+echo "      ✅ INSTALLATION ERFOLGREICH ABGESCHLOSSEN! ✅"
 echo "========================================================"
+echo "Der AI-Hedge-Fund läuft jetzt, benötigt aber einen API-Schlüssel."
+echo "--------------------------------------------------------"
+echo "ANLEITUNG ZUM ABSCHLUSS:"
+echo "--------------------------------------------------------"
+echo "1. API-Key eintragen:"
+echo "   Öffnen Sie die Konfigurationsdatei mit nano:"
+echo "   nano $PROJECT_ROOT/.env"
+echo "   Fügen Sie die Zeile OPENAI_API_KEY=\"IHR_SCHLÜSSEL\" ein."
+echo "   Speichern: Strg+O, Enter. Schließen: Strg+X."
+echo ""
+echo "2. Tmux verbinden und neu starten:"
+echo "   Verbinden Sie sich mit der laufenden Sitzung:"
+echo "   tmux attach -t $TMUX_SESSION"
+echo ""
+echo "   Im Tmux-Fenster (Frontend-UI 5173):"
+echo "   Stoppen: Strg+C"
+echo "   Neu starten: Enter"
+echo "--------------------------------------------------------"
+echo "🌐 Frontend-UI (Vite) ist erreichbar unter: http://[Ihre VM-IP-Adresse]:5173"
+echo "💻 Backend-API (Docs) ist erreichbar unter: http://[Ihre VM-IP-Adresse]:8000/docs"
+echo "--------------------------------------------------------"
 
-# Sitzung wieder aufnehmen, damit der Benutzer die Logs sieht
+# Sitzung wieder aufnehmen, damit der Benutzer sofort die Logs sieht
 tmux attach -t "$TMUX_SESSION"
