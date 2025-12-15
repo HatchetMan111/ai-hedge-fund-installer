@@ -1,104 +1,95 @@
 #!/bin/bash
-# Installskript für ai-hedge-fund (https://github.com/virattt/ai-hedge-fund)
-# Entwickelt für Debian/Ubuntu (Proxmox LXC/VM)
-# Kann direkt von GitHub ausgeführt werden:
-# wget -qO - https://raw.githubusercontent.com/<YOUR_GITHUB_USER>/<YOUR_REPO_NAME>/main/install_ai_hedge_fund.sh | bash
+#
+# FILE: install_and_start.sh
+# DESCRIPTION: Vollständige Installation und Start der AI-Hedge-Fund-Anwendung (Backend & Frontend).
+# AUTHOR: Gemini AI Assistent & HatchetFondAI User
+#
+# VERWENDUNG: 
+#   1. Stelle sicher, dass Poetry auf dem System installiert ist.
+#   2. Führe das Skript aus: ./install_and_start.sh
+#
+set -e # Beendet das Skript sofort bei einem Fehler
 
-# --- Konfiguration ---
-INSTALL_DIR="$HOME/ai-hedge-fund"
-REPO_URL="https://github.com/virattt/ai-hedge-fund.git"
-USER_NAME=$(whoami)
+PROJECT_ROOT=$(pwd)
+TMUX_SESSION="ai_hedge_fund"
 
-# --- Funktionen ---
+echo "========================================================"
+echo "           AI Hedge Fund - Setup & Start Script"
+echo "========================================================"
 
-log_info() {
-    echo -e "\n\033[1;34m[INFO]\033[0m $1"
-}
+# --- 1. System-Vorbereitung (apt, Build-Tools, Tmux, Node.js) ---
+echo "--- 1/5: Installation der System-Abhängigkeiten ---"
+sudo apt update
+sudo apt install -y build-essential python3-dev curl tmux git
 
-log_success() {
-    echo -e "\n\033[1;32m[ERFOLG]\033[0m $1"
-}
-
-log_error() {
-    echo -e "\n\033[1;31m[FEHLER]\033[0m $1" >&2
-    exit 1
-}
-
-# --- Hauptinstallation ---
-
-log_info "Starte die Installation des ai-hedge-fund..."
-log_info "Aktualisiere System und installiere grundlegende Pakete..."
-
-# 1. Systemaktualisierung und Abhängigkeiten
-# Installiere `wget` falls noch nicht vorhanden, da es für curl install benötigt wird
-if ! command -v wget &> /dev/null; then
-    sudo apt update && sudo apt install -y wget
-fi
-if ! command -v curl &> /dev/null; then
-    sudo apt update && sudo apt install -y curl
-fi
-
-sudo apt update || log_error "Aktualisierung der Paketlisten fehlgeschlagen."
-sudo apt install -y git python3 python3-pip || log_error "Installation der System-Abhängigkeiten fehlgeschlagen."
-
-# 2. Poetry Installation
-log_info "Installiere Python-Abhängigkeitsmanager Poetry..."
-if ! command -v poetry &> /dev/null; then
-    curl -sSL https://install.python-poetry.org | python3 - || log_error "Installation von Poetry fehlgeschlagen."
-    
-    # Fügen Sie Poetry zum PATH der aktuellen Shell und zur .bashrc/oder .zshrc hinzu
-    export PATH="$HOME/.local/bin:$PATH"
-    
-    # Permanentes Hinzufügen des PATH für den aktuellen Benutzer
-    # Überprüfen, ob es bereits in der .bashrc enthalten ist, um Duplikate zu vermeiden
-    if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc"; then
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-    fi
-    log_success "Poetry wurde erfolgreich installiert und zum PATH hinzugefügt."
+# Node.js LTS 20 installieren (falls nicht vorhanden)
+if ! command -v node &> /dev/null; then
+    echo "Installing Node.js 20 LTS for frontend..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
 else
-    log_info "Poetry ist bereits installiert."
+    echo "Node.js already installed."
 fi
 
-# 3. Repository klonen
-log_info "Klone das ai-hedge-fund Repository nach $INSTALL_DIR..."
-if [ -d "$INSTALL_DIR" ]; then
-    log_info "Verzeichnis existiert bereits. Lösche das alte Verzeichnis..."
-    rm -rf "$INSTALL_DIR" || log_error "Löschen des alten Verzeichnisses fehlgeschlagen."
-fi
+# --- 2. Backend (Python/Poetry) Installation ---
+echo "--- 2/5: Installation der Backend-Abhängigkeiten via Poetry ---"
+# Bereinigung und Installation
+poetry env remove python || true
+poetry cache clear --all pypi
+poetry install
 
-git clone "$REPO_URL" "$INSTALL_DIR" || log_error "Klonen des Repositorys fehlgeschlagen."
-cd "$INSTALL_DIR" || log_error "Wechseln in das Installationsverzeichnis fehlgeschlagen."
+# --- 3. Frontend (npm) Installation ---
+echo "--- 3/5: Installation der Frontend-Abhängigkeiten via npm ---"
+cd "$PROJECT_ROOT/app/frontend"
+npm install
+cd "$PROJECT_ROOT" # Zurück zum Wurzelverzeichnis
 
-# 4. Python-Abhängigkeiten installieren
-log_info "Installiere Python-Abhängigkeiten mit Poetry. Das kann einige Minuten dauern..."
-# Stellen Sie sicher, dass Poetry im aktuellen Shell-Kontext verfügbar ist, falls es gerade erst installiert wurde
-export PATH="$HOME/.local/bin:$PATH"
+# --- 4. Wichtige Code-Korrektur (Case-Sensitivity Fix für Linux) ---
+echo "--- 4/5: Anwenden des Case-Sensitivity-Fixes für App.tsx ---"
+APP_TSX="$PROJECT_ROOT/app/frontend/src/App.tsx"
 
-poetry install || log_error "Installation der Python-Abhängigkeiten mit Poetry fehlgeschlagen."
-
-# 5. Konfiguration (API-Schlüssel) vorbereiten
-log_info "Bereite die .env Konfigurationsdatei vor..."
-if [ ! -f .env ]; then
-    cp .env.example .env
-    log_info "Eine .env-Datei wurde basierend auf .env.example erstellt."
-    log_info "BITTE BEACHTEN SIE: Sie müssen nun die Datei $INSTALL_DIR/.env bearbeiten und Ihre OPENAI_API_KEY (und ggf. weitere Schlüssel) eintragen."
+# Korrektur des fehlerhaften Imports (layout -> Layout.tsx)
+if grep -q "import { Layout } from './components/layout';" "$APP_TSX"; then
+    echo "Applying fix: './components/layout' -> './components/Layout.tsx'"
+    # Verwendung von sed zum Ersetzen (funktioniert auf den meisten Linux-Distributionen)
+    sed -i "s|import { Layout } from './components/layout';|import { Layout } from './components/Layout.tsx';|g" "$APP_TSX"
 else
-    log_info "Die .env-Datei existiert bereits."
+    echo "Fix already applied or import structure changed."
 fi
 
-# 6. Abschluss und Anweisungen
-log_success "Die Installation des ai-hedge-fund ist abgeschlossen!"
 
-echo "--- Nächste Schritte ---"
-echo "1. Wechseln Sie in das Installationsverzeichnis:"
-echo "   cd $INSTALL_DIR"
-echo "2. Bearbeiten Sie die Konfigurationsdatei und fügen Sie Ihre API-Schlüssel hinzu:"
-echo "   nano .env"
-echo "3. Führen Sie die Anwendung aus. Beispiele:"
-echo "   # Führen Sie die CLI aus:"
-echo "   poetry run python src/main.py --ticker AAPL,MSFT,NVDA"
-echo "   # Starten Sie die Webanwendung (falls gewünscht, siehe GitHub für Details):"
-echo "   poetry run streamlit run src/web_app.py"
+# --- 5. Start der Dienste in TMUX ---
+echo "--- 5/5: Starten der Dienste in der Tmux-Sitzung '$TMUX_SESSION' ---"
 
-echo "------------------------"
-log_info "Um Poetry nach dem nächsten Login zu nutzen, starten Sie die Shell neu oder führen Sie 'source ~/.bashrc' aus."
+# Prüfen, ob die Sitzung bereits existiert
+tmux has-session -t "$TMUX_SESSION" 2>/dev/null
+
+if [ $? != 0 ]; then
+    echo "Starte neue Tmux-Sitzung: $TMUX_SESSION"
+    tmux new-session -d -s "$TMUX_SESSION"
+    
+    # Fenster 0: Backend starten (API)
+    tmux send-keys -t "$TMUX_SESSION:0" "cd $PROJECT_ROOT" C-m
+    # Host 0.0.0.0 ist wichtig für den Zugriff von extern (nicht nur 127.0.0.1)
+    tmux send-keys -t "$TMUX_SESSION:0" "poetry run uvicorn app.backend.main:app --host 0.0.0.0 --reload" C-m
+    tmux rename-window -t "$TMUX_SESSION:0" "Backend-API (8000)"
+
+    # Neues Fenster 1: Frontend starten (UI)
+    tmux new-window -t "$TMUX_SESSION:1" -n "Frontend-UI (5173)"
+    tmux send-keys -t "$TMUX_SESSION:1" "cd $PROJECT_ROOT/app/frontend" C-m
+    # --host 0.0.0.0 ist wichtig für den Zugriff von extern
+    tmux send-keys -t "$TMUX_SESSION:1" "npm run dev -- --host 0.0.0.0" C-m
+    
+    echo "========================================================"
+    echo "✅ INSTALLATION UND START ERFOLGREICH!"
+    echo "Frontend-UI ist verfügbar unter: http://[Ihre VM-IP-Adresse]:5173"
+    echo "Backend-API (Docs) ist verfügbar unter: http://[Ihre VM-IP-Adresse]:8000/docs"
+    echo "--------------------------------------------------------"
+    echo "Wechsle nun zur Tmux-Sitzung. Drücken Sie 'Strg+B, N/P' zum Wechseln."
+    
+else
+    echo "Tmux-Sitzung '$TMUX_SESSION' existiert bereits. Verbinde neu."
+fi
+
+# Sitzung wieder aufnehmen
+tmux attach -t "$TMUX_SESSION"
