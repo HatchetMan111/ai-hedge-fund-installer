@@ -4,7 +4,20 @@ Dieses Repository enthält ein Bash-Skript (`install_ai_hedge_fund.sh`), das die
 Dazu nutzen Sie am besten die helper scripts um z.B. ein Ubuntu 25.04. bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/vm/ubuntu2504-vm.sh)"
 Dannach im Cloud Init Root und Passwort setzen und zudem DHCP oder Ip Adresse vergeben. Dannach auf Regenerate Image klicken und Reboot VM! 
 In dieser VM dieses Install Script eingeben! 
+Abschluss der Konfiguration:
+API-Key eintragen:
+Bash
+nano ai-hedge-fund/.env
 
+# Fügen Sie hier Ihre Zeile ein: OPENAI_API_KEY="IHR_SCHLÜSSEL"
+Dienste neu starten: Verbinden Sie sich mit der laufenden Sitzung und starten Sie das Frontend neu, damit der Key geladen wird.
+
+Bash
+
+tmux attach -t ai_hedge_fund_session
+# In Tmux: Strg+B, dann 1 (zum Frontend-Fenster wechseln)
+# Stoppen: Strg+C
+# Neu starten: Enter
 ## Features
 
 * Aktualisiert das System und installiert benötigte Pakete (git, python3, pip, curl).
