@@ -2,7 +2,7 @@
 
 Dieses Repository enthält ein Bash-Skript (`install_ai_hedge_fund.sh`), das die Installation des [ai-hedge-fund](https://github.com/virattt/ai-hedge-fund) Projekts von virattt auf Debian/Ubuntu-basierten Systemen automatisiert. Es ist ideal für die schnelle Einrichtung in einer Proxmox LXC oder VM.
 Dazu nutzen Sie am besten die helper scripts um z.B. ein Ubuntu 25.04. bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/vm/ubuntu2504-vm.sh)"
-Dannach im Cloud Init Root und Passwort setzen und zudem DHCP oder Ip Adresse vergeben. Dannach Regenerate Image klicken! 
+Dannach im Cloud Init Root und Passwort setzen und zudem DHCP oder Ip Adresse vergeben. Dannach auf Regenerate Image klicken und Reboot VM! 
 In dieser VM dieses Install Script eingeben! 
 
 ## Features
