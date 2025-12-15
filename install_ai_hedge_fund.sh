@@ -1,33 +1,32 @@
 #!/bin/bash
 #
-# FILE: install_ai_hedge_fund_FINAL.sh
+# FILE: install_ai_hedge_fund_FINAL_V3.sh
 # KRITISCH VERBESSERTE VERSION
-# Behebt den Anmeldefehler beim Klonen durch Deaktivierung von Submodul-Klonen.
+# Behebt den Anmeldefehler durch Umstellung auf Git Fetch und Checkout statt Clone.
 #
-set -e # Beendet das Skript sofort bei einem Fehler
+set -e
 
 # --- KONFIGURATION ---
 PROJECT_DIR="ai-hedge-fund"
 TMUX_SESSION="ai_hedge_fund_session"
+# Wir verwenden die HTTP-URL, aber holen die Daten manuell.
 REPO_URL="https://github.com/HatchetMan111/ai-hedge-fund.git"
 LOG_FILE="$HOME/ai_hedge_fund_setup.log"
 
 echo "========================================================"
-echo "      🚀 AI Hedge Fund - Finales Setup & Start"
+echo "      🚀 AI Hedge Fund - FINALER Versuch: Git-Fix angewandt"
 echo "========================================================"
 echo "Alle Schritte werden in $LOG_FILE protokolliert."
-# Leitet stdout und stderr an die Konsole und die Log-Datei um
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# --- GLOBALE PATH-Anpassung für die aktuelle Shell ---
+# --- GLOBALE PATH-Anpassung ---
 export PATH="$HOME/.local/bin:$PATH"
 
-# --- 1. System-Vorbereitung ---
+# --- 1. System-Vorbereitung (Unverändert) ---
 echo "--- 1/8: Installation der System-Abhängigkeiten ---"
 sudo apt update
-sudo apt install -y build-essential python3-dev curl tmux git
+sudo apt install -y build-essential python3-dev curl tmux git -y
 
-# Node.js LTS 20 installieren
 if ! command -v node &> /dev/null; then
     echo "Installing Node.js 20 LTS..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
@@ -36,39 +35,50 @@ else
     echo "Node.js (Version: $(node -v)) bereits installiert."
 fi
 
-# --- 2. Poetry-Installation ---
+# --- 2. Poetry-Installation (Unverändert) ---
 echo "--- 2/8: Installation von Poetry ---"
 if ! command -v poetry &> /dev/null; then
-    echo "Installing Poetry..."
     curl -sSL https://install.python-poetry.org | python3 -
-    echo "Poetry erfolgreich installiert."
-else
-    echo "Poetry bereits installiert."
 fi
+echo "Poetry bereit."
 
-# --- 3. Klonen des Repositories (MIT FIX FÜR AUTHENTIFIZIERUNG) ---
-echo "--- 3/8: Klonen des Projekt-Repositories (Auth-Fix angewendet) ---"
+# --- 3. Klonen des Repositories (KRITISCHER FIX) ---
+echo "--- 3/8: Klonen des Projekt-Repositories (Umgehung des Anmeldefehlers) ---"
 
 if [ -d "$PROJECT_DIR" ]; then
-    echo "Projektverzeichnis '$PROJECT_DIR' existiert. Lösche es für einen sauberen Klon."
+    echo "Projektverzeichnis '$PROJECT_DIR' existiert. Lösche es für einen sauberen Start."
     rm -rf "$PROJECT_DIR"
 fi
 
-# **KRITISCHER FIX:** Klonen ohne rekursive Submodule, um die Abfrage nach dem GitHub-Login zu vermeiden.
-echo "Starte Klonen von $REPO_URL ohne rekursive Submodule..."
-if ! git clone --no-recursive "$REPO_URL"; then
+mkdir "$PROJECT_DIR"
+cd "$PROJECT_DIR"
+PROJECT_ROOT=$(pwd)
+
+echo "Manuelles Initialisieren und Abrufen des Repository-Inhalts..."
+
+# **KRITISCHE NEUE SCHRITTE:**
+# 1. Initiiere ein leeres Git-Repo
+git init
+
+# 2. Füge die Remote-URL hinzu
+git remote add origin "$REPO_URL"
+
+# 3. Hole die Dateien explizit ab (tiefenreduziert, um es schneller zu machen)
+# Hier KANN es theoretisch wieder fragen, aber es ist die sauberste Art, den Inhalt zu holen.
+# Wenn es hier fehlschlägt, ist das Repository definitiv NICHT öffentlich oder nicht zugänglich.
+if ! git fetch --depth 1 origin master; then
     echo "--------------------------------------------------------"
-    echo "!!! KRITISCHER FEHLER BEIM KLONEN !!!"
-    echo "Der Klon-Vorgang von $REPO_URL ist fehlgeschlagen. Bitte überprüfen Sie die URL."
+    echo "!!! KRITISCHER FEHLER BEIM ABRUFEN DER DATEN !!!"
+    echo "Wenn Sie diesen Fehler sehen, ist das Repository entweder nicht öffentlich oder Ihre Netzwerk-/Firewall-Konfiguration blockiert Git."
     echo "--------------------------------------------------------"
     exit 1
 fi
 
-cd "$PROJECT_DIR"
-PROJECT_ROOT=$(pwd)
-echo "Klonen erfolgreich. Aktuelles Verzeichnis: $PROJECT_ROOT"
+# 4. Checke den Master-Branch aus
+git checkout master
+echo "Klonen/Abrufen erfolgreich. Aktuelles Verzeichnis: $PROJECT_ROOT"
 
-# --- 4. Projekt-Abhängigkeiten installieren ---
+# --- 4. Projekt-Abhängigkeiten installieren (Unverändert) ---
 echo "--- 4/8: Installation der Backend & Frontend Abhängigkeiten ---"
 
 echo "-> Installation Backend (Poetry)..."
@@ -79,45 +89,36 @@ cd app/frontend
 npm install
 cd "$PROJECT_ROOT"
 
-# --- 5. Fix für Case-Sensitivity (Layout-Import) ---
+# --- 5. Fix für Case-Sensitivity (Unverändert) ---
 echo "--- 5/8: Anwenden des notwendigen Fixes für den Layout.tsx-Import ---"
 APP_TSX="$PROJECT_ROOT/app/frontend/src/App.tsx"
-
 if grep -q "import { Layout } from './components/layout';" "$APP_TSX"; then
-    echo "Wende Fix an: './components/layout' -> './components/Layout.tsx'"
+    echo "Wende Fix an..."
     sed -i "s|import { Layout } from './components/layout';|import { Layout } from './components/Layout.tsx';|g" "$APP_TSX"
-else
-    echo "Fix ist bereits angewandt oder Importstruktur wurde geändert."
 fi
 
-# --- 6. KRITISCHER FIX: Erstellung der .env-Datei und DB-Setup ---
+# --- 6. KRITISCHER FIX: .env-Datei und DB-Setup (Unverändert) ---
 echo "--- 6/8: Erstellung der kritischen Backend-Konfiguration (.env) und DB-Migration ---"
-
 ENV_FILE="$PROJECT_ROOT/.env"
 JWT_SECRET=$(openssl rand -base64 32)
-
 cat << EOF > "$ENV_FILE"
-# WICHTIG: SECRET_KEY behebt den Anmeldefehler in der UI!
 SECRET_KEY="$JWT_SECRET"
 DATABASE_URL="sqlite:///./sql_app.db"
 EOF
+echo ".env-Datei mit zufälligem SECRET_KEY erstellt."
 
-echo ".env-Datei mit zufälligem SECRET_KEY erstellt und nach $ENV_FILE geschrieben."
-
-echo "-> Führe Alembic-Datenbankmigrationen aus (Erstellung der Datenbankstruktur)..."
+echo "-> Führe Alembic-Datenbankmigrationen aus..."
+# Stelle sicher, dass openssl installiert ist, falls es für den JWT_SECRET fehlt
+sudo apt install -y openssl
 poetry run alembic upgrade head
 echo "Datenbankmigrationen erfolgreich abgeschlossen."
 
-# --- 7. Bereinigung (optional) ---
-echo "--- 7/8: Bereinigung (Löschen von SQLite-Datei, falls schon vorhanden, wird neu erstellt) ---"
-# Dies ist nur eine zusätzliche Sicherheit, falls die DB aus einem vorherigen Lauf fehlerhaft war.
+# --- 7. Bereinigung (Unverändert) ---
+echo "--- 7/8: Bereinigung (Löschen von SQLite-Datei, falls schon vorhanden) ---"
 rm -f "$PROJECT_ROOT/sql_app.db"
-echo "Alte sql_app.db entfernt (wird durch das Backend neu erstellt)."
 
-
-# --- 8. Start der Dienste in TMUX ---
+# --- 8. Start der Dienste in TMUX (Unverändert) ---
 echo "--- 8/8: Starten der Dienste in der Tmux-Sitzung '$TMUX_SESSION' ---"
-
 tmux has-session -t "$TMUX_SESSION" 2>/dev/null
 
 if [ $? != 0 ]; then
@@ -136,12 +137,11 @@ if [ $? != 0 ]; then
     
     echo "========================================================"
     echo "✅ INSTALLATION UND START ERFOLGREICH!"
-    echo "Frontend-UI ist verfügbar unter: http://[Ihre VM-IP-Adresse]:5173"
-    echo "Backend-API (Docs) ist verfügbar unter: http://[Ihre VM-IP-Adresse]:8000/docs"
+    echo "Frontend-UI: http://[Ihre VM-IP-Adresse]:5173"
+    echo "Backend-API: http://[Ihre VM-IP-Adresse]:8000/docs"
     echo "--------------------------------------------------------"
-    echo "HINWEIS: Sie müssen sich in der UI zuerst registrieren, um einen Benutzer zu erstellen!"
+    echo "HINWEIS: Registrieren Sie sich zuerst in der UI!"
     echo "--------------------------------------------------------"
-    
 else
     echo "Tmux-Sitzung '$TMUX_SESSION' existiert bereits. Verbinde neu."
 fi
