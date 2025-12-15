@@ -1,6 +1,8 @@
 #!/bin/bash
 # Installskript für ai-hedge-fund (https://github.com/virattt/ai-hedge-fund)
 # Entwickelt für Debian/Ubuntu (Proxmox LXC/VM)
+# Kann direkt von GitHub ausgeführt werden:
+# wget -qO - https://raw.githubusercontent.com/<YOUR_GITHUB_USER>/<YOUR_REPO_NAME>/main/install_ai_hedge_fund.sh | bash
 
 # --- Konfiguration ---
 INSTALL_DIR="$HOME/ai-hedge-fund"
@@ -28,8 +30,16 @@ log_info "Starte die Installation des ai-hedge-fund..."
 log_info "Aktualisiere System und installiere grundlegende Pakete..."
 
 # 1. Systemaktualisierung und Abhängigkeiten
+# Installiere `wget` falls noch nicht vorhanden, da es für curl install benötigt wird
+if ! command -v wget &> /dev/null; then
+    sudo apt update && sudo apt install -y wget
+fi
+if ! command -v curl &> /dev/null; then
+    sudo apt update && sudo apt install -y curl
+fi
+
 sudo apt update || log_error "Aktualisierung der Paketlisten fehlgeschlagen."
-sudo apt install -y git python3 python3-pip curl || log_error "Installation der System-Abhängigkeiten fehlgeschlagen."
+sudo apt install -y git python3 python3-pip || log_error "Installation der System-Abhängigkeiten fehlgeschlagen."
 
 # 2. Poetry Installation
 log_info "Installiere Python-Abhängigkeitsmanager Poetry..."
